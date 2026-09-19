@@ -1,0 +1,50 @@
+@import "tailwindcss";
+
+:root {
+  --background: #0c0d10;
+  --foreground: #ece8e1;
+  --muted: #8d8880;
+  --accent: #d7c4a3;
+  --card: #14151a;
+  --line: rgba(236, 232, 225, 0.08);
+  --font-sans: var(--font-sans);
+  --font-display: var(--font-display);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-sans);
+}
+
+html,
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), sans-serif;
+}
+
+.pulse-ring {
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  animation: pulse 3.6s ease-out infinite;
+}
+
+.pulse-ring.delay {
+  animation-delay: 1.2s;
+}
+
+.pulse-ring.speaking {
+  border-color: color-mix(in srgb, var(--accent) 70%, transparent);
+  animation-duration: 1.8s;
+}
+
+@keyframes pulse {
+  0% {
+    transform: scale(0.72);
+    opacity: 0.55;
+  }
+  100% {
+    transform: scale(1.18);
+    opacity: 0;
+  }
+}
