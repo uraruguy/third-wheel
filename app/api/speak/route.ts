@@ -1,3 +1,4 @@
+import { debugLog } from "@/lib/debug-log";
 import { isNoSpeakPrefix } from "@/lib/no-speak";
 import { streamSpokenReply } from "@/lib/openrouter";
 import { parseSpeakMode } from "@/lib/jev-routing";
@@ -13,11 +14,17 @@ export async function POST(request: Request) {
     useWeb?: boolean;
     language?: SpeechLanguage;
     followUpQuery?: string;
+    lastSpokenTurn?: string;
+    sessionId?: string;
   };
 
   const latestSpeech = (body.latestSpeech ?? "").trim();
   const mode = parseSpeakMode(body.mode) as SpeakMode;
   if (!latestSpeech && !body.followUpQuery) {
+    debugLog("no_speak", {
+      sessionId: body.sessionId,
+      reason: "empty-speech",
+    });
     return sseNoSpeak();
   }
 
@@ -42,6 +49,8 @@ export async function POST(request: Request) {
           useWeb: body.useWeb !== false,
           language: body.language === "sl" ? "sl" : "en",
           followUpQuery: body.followUpQuery,
+          lastSpokenTurn: body.lastSpokenTurn,
+          sessionId: body.sessionId,
         })) {
           if (event.type === "no_speak") {
             send({ type: "no_speak" });
@@ -76,6 +85,7 @@ export async function POST(request: Request) {
           }
         }
       } catch {
+        debugLog("error", { sessionId: body.sessionId, source: "speak-route" });
         send({ type: "error", message: "Speak failed" });
       } finally {
         controller.close();

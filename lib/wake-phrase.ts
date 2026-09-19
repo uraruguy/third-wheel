@@ -4,6 +4,8 @@ const WAKE_PHRASES = [
   "third wheel",
 ] as const;
 
+export type WakePhrase = (typeof WAKE_PHRASES)[number];
+
 export function normalizeSpeech(text: string): string {
   return text
     .toLowerCase()
@@ -17,23 +19,77 @@ export function normalizeSpeech(text: string): string {
 export function detectWakePhrase(text: string): {
   matched: boolean;
   remainder: string;
-  phrase?: (typeof WAKE_PHRASES)[number];
+  nameOnly: boolean;
+  phrase?: WakePhrase;
 } {
-  const normalized = normalizeSpeech(text);
-  if (!normalized) {
-    return { matched: false, remainder: "" };
+  const hit = matchName(text);
+  if (!hit) {
+    return { matched: false, remainder: normalizeSpeech(text), nameOnly: false };
   }
+  return {
+    matched: true,
+    remainder: hit.remainder,
+    nameOnly: hit.remainder.length === 0,
+    phrase: hit.phrase,
+  };
+}
+
+function matchName(text: string): { phrase: WakePhrase; remainder: string } | null {
+  const normalized = normalizeSpeech(text);
+  if (!normalized) return null;
 
   for (const phrase of WAKE_PHRASES) {
-    const index = normalized.indexOf(phrase);
-    if (index === -1) continue;
-    const remainder = `${normalized.slice(0, index)} ${normalized.slice(index + phrase.length)}`
-      .replace(/\s+/g, " ")
-      .trim();
-    return { matched: true, remainder, phrase };
+    let from = 0;
+    while (from <= normalized.length) {
+      const index = normalized.indexOf(phrase, from);
+      if (index === -1) break;
+      const beforeOk = index === 0 || normalized[index - 1] === " ";
+      const after = index + phrase.length;
+      const afterOk = after === normalized.length || normalized[after] === " ";
+      if (beforeOk && afterOk) {
+        const remainder = `${normalized.slice(0, index)} ${normalized.slice(after)}`
+          .replace(/\s+/g, " ")
+          .trim();
+        return { phrase, remainder };
+      }
+      from = index + 1;
+    }
+  }
+  return null;
+}
+
+export type UtterancePlan =
+  | { action: "ignore-echo" }
+  | { action: "wait-for-question" }
+  | { action: "speak-addressed"; question: string }
+  | { action: "jev" };
+
+export function planUtterance(input: {
+  text: string;
+  lastSpokenText: string;
+  pendingNameOnly: boolean;
+  isEcho: boolean;
+}): UtterancePlan {
+  const wake = detectWakePhrase(input.text);
+
+  if (input.pendingNameOnly) {
+    if (input.isEcho && !wake.matched) return { action: "ignore-echo" };
+    if (wake.matched && wake.nameOnly) return { action: "wait-for-question" };
+    return {
+      action: "speak-addressed",
+      question: wake.remainder || input.text.trim(),
+    };
   }
 
-  return { matched: false, remainder: normalized };
+  if (input.isEcho && !wake.matched) return { action: "ignore-echo" };
+  if (input.isEcho && wake.matched && wake.nameOnly) {
+    const spoken = normalizeSpeech(input.lastSpokenText);
+    if (spoken.includes("third wheel")) return { action: "ignore-echo" };
+  }
+
+  if (!wake.matched) return { action: "jev" };
+  if (wake.nameOnly) return { action: "wait-for-question" };
+  return { action: "speak-addressed", question: wake.remainder };
 }
 
 const FOLLOW_UP_PATTERNS: RegExp[] = [

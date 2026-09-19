@@ -7,7 +7,7 @@ import {
   topicWindow,
 } from "../transcript-window";
 import type { Source, SpeakMode, SpeechLanguage, TranscriptUtterance } from "../types";
-import { detectFollowUp, detectWakePhrase } from "../wake-phrase";
+import { detectFollowUp, detectWakePhrase, planUtterance } from "../wake-phrase";
 import { startMicCapture, type CaptureHandle } from "./mic";
 import { SonioxSttClient } from "./stt";
 import { SonioxTtsPlayer } from "./tts";
@@ -43,9 +43,11 @@ export class ThirdWheelSession {
   private conversationTimer: number | null = null;
   private lastSpokenText = "";
   private generation = 0;
-  private wakeLockUntil = 0;
+  private lastWakePartialAt = 0;
+  private pendingNameOnly = false;
   private ignoreJevUntil = 0;
   private running = false;
+  private sessionId = "";
 
   constructor(private onChange: (snapshot: SessionSnapshot) => void) {}
 
@@ -62,14 +64,19 @@ export class ThirdWheelSession {
   async start() {
     if (this.running) return;
     this.running = true;
+    this.sessionId = crypto.randomUUID();
+    this.pendingNameOnly = false;
     this.error = null;
     this.setPhase("listening");
     try {
-      const sttKey = await fetchTempKey("transcribe_websocket");
+      const sttKey = await fetchTempKey("transcribe_websocket", this.sessionId);
       this.stt = new SonioxSttClient({
         onPartial: (text) => this.onPartial(text),
         onEndpoint: (utterance) => this.onEndpoint(utterance),
-        onError: (message) => this.fail(message),
+        onError: (message) => {
+          this.postDebug("error", { source: "stt", message });
+          this.fail(message);
+        },
       });
       await this.stt.connect(sttKey);
       this.capture = await startMicCapture((pcm) => this.stt?.sendPcm(pcm));
@@ -90,6 +97,8 @@ export class ThirdWheelSession {
     if (this.conversationTimer) window.clearTimeout(this.conversationTimer);
     this.conversationTimer = null;
     this.conversationUntil = 0;
+    this.pendingNameOnly = false;
+    this.sessionId = "";
     this.phase = "idle";
     this.partial = "";
     this.emit();
@@ -101,36 +110,48 @@ export class ThirdWheelSession {
     if (!text || !this.running) return;
 
     const wake = detectWakePhrase(text);
-    if (wake.matched && Date.now() > this.wakeLockUntil) {
-      this.wakeLockUntil = Date.now() + 4000;
-      void this.speakNow({
-        mode: "addressed",
-        latestSpeech: text,
-        followUpQuery: wake.remainder || undefined,
-        useWeb: true,
+    const echo = looksLikeEcho(text, this.lastSpokenText);
+    if (wake.matched && !echo) {
+      this.postDebug("wake", {
+        source: "partial",
+        text,
+        remainder: wake.remainder,
+        nameOnly: wake.nameOnly,
+        phrase: wake.phrase,
       });
-      return;
+      if (this.tts.isPlaying && Date.now() - this.lastWakePartialAt > 400) {
+        this.tts.bargeIn();
+      }
+      this.lastWakePartialAt = Date.now();
     }
 
     if (this.inConversation) {
       const follow = detectFollowUp(text);
-      if (follow.matched) {
-        void this.speakNow({
-          mode: "followup",
-          latestSpeech: text,
-          followUpQuery: follow.query,
-          useWeb: true,
-        });
+      if (follow.matched && !echo) {
+        this.postDebug("follow_up", { source: "partial", query: follow.query, text });
+        if (this.tts.isPlaying) this.tts.bargeIn();
       }
     }
   }
 
   private onEndpoint(utterance: TranscriptUtterance) {
     const now = Date.now();
-    if (this.tts.isPlaying && looksLikeEcho(utterance.text, this.lastSpokenText)) {
-      return;
-    }
-    if (now < this.ignoreJevUntil && looksLikeEcho(utterance.text, this.lastSpokenText)) {
+    const echo = looksLikeEcho(utterance.text, this.lastSpokenText);
+    this.postDebug("stt_endpoint", {
+      text: utterance.text,
+      echo,
+      pendingNameOnly: this.pendingNameOnly,
+      ttsPlaying: this.tts.isPlaying,
+    });
+
+    const plan = planUtterance({
+      text: utterance.text,
+      lastSpokenText: this.lastSpokenText,
+      pendingNameOnly: this.pendingNameOnly,
+      isEcho: echo,
+    });
+
+    if (plan.action === "ignore-echo") {
       return;
     }
 
@@ -138,15 +159,46 @@ export class ThirdWheelSession {
     this.partial = "";
     this.emit();
 
-    if (Date.now() < this.wakeLockUntil) return;
+    if (plan.action === "wait-for-question") {
+      this.pendingNameOnly = true;
+      this.postDebug("wake", {
+        source: "endpoint",
+        nameOnly: true,
+        text: utterance.text,
+      });
+      if (this.tts.isPlaying) this.tts.bargeIn();
+      this.setPhase("listening");
+      return;
+    }
+
+    if (plan.action === "speak-addressed") {
+      this.pendingNameOnly = false;
+      this.postDebug("wake", {
+        source: "endpoint",
+        question: plan.question,
+        text: utterance.text,
+      });
+      if (this.tts.isPlaying) this.tts.bargeIn();
+      void this.speakNow({
+        mode: "addressed",
+        latestSpeech: utterance.text,
+        followUpQuery: plan.question,
+        useWeb: true,
+        language: utterance.language,
+      });
+      return;
+    }
 
     const follow = detectFollowUp(utterance.text);
     if (this.inConversation && follow.matched) {
+      this.postDebug("follow_up", { source: "endpoint", query: follow.query });
+      if (this.tts.isPlaying) this.tts.bargeIn();
       void this.speakNow({
         mode: "followup",
         latestSpeech: utterance.text,
         followUpQuery: follow.query,
         useWeb: true,
+        language: utterance.language,
       });
       return;
     }
@@ -154,6 +206,8 @@ export class ThirdWheelSession {
     if (this.tts.isPlaying || this.phase === "thinking" || this.phase === "speaking") {
       return;
     }
+
+    if (now < this.ignoreJevUntil) return;
 
     void this.decide(utterance);
   }
@@ -169,8 +223,12 @@ export class ThirdWheelSession {
         body: JSON.stringify({
           recentSpeech: recentSpeechWindow(this.utterances, now) || utterance.text,
           topicSummary: topicSummary(this.utterances, now),
+          topicWindow: topicWindow(this.utterances, now),
+          latestSpeech: utterance.text,
+          lastSpokenTurn: this.lastSpokenText,
           inConversation: this.inConversation,
           addressed: false,
+          sessionId: this.sessionId,
         }),
       });
       const decision = (await response.json()) as {
@@ -191,6 +249,7 @@ export class ThirdWheelSession {
         generation,
       });
     } catch {
+      this.postDebug("error", { source: "decide" });
       if (generation === this.generation) this.setPhase("listening");
     }
   }
@@ -223,8 +282,7 @@ export class ThirdWheelSession {
     const ensureTts = async () => {
       if (ttsReady) return;
       this.capture?.setGain(DUCK_GAIN);
-      this.ignoreJevUntil = Date.now() + 60_000;
-      const ttsKey = await fetchTempKey("tts_rt");
+      const ttsKey = await fetchTempKey("tts_rt", this.sessionId);
       if (generation !== this.generation) return;
       await this.tts.startStream(ttsKey, language);
       ttsReady = true;
@@ -260,6 +318,8 @@ export class ThirdWheelSession {
           useWeb: input.useWeb,
           language,
           followUpQuery: input.followUpQuery,
+          lastSpokenTurn: this.lastSpokenText,
+          sessionId: this.sessionId,
         }),
       });
 
@@ -334,13 +394,16 @@ export class ThirdWheelSession {
         await this.tts.waitUntilIdle();
       }
     } catch {
+      this.postDebug("error", { source: "speak" });
       this.tts.bargeIn();
     } finally {
-      this.capture?.setGain(1);
-      this.ignoreJevUntil = Date.now() + 1200;
-      if (generation === this.generation && this.running) {
-        if (spoke) this.openConversationWindow();
-        this.setPhase("listening");
+      if (generation === this.generation) {
+        this.capture?.setGain(1);
+        this.ignoreJevUntil = Date.now() + 1200;
+        if (this.running) {
+          if (spoke) this.openConversationWindow();
+          this.setPhase("listening");
+        }
       }
     }
   }
@@ -365,9 +428,22 @@ export class ThirdWheelSession {
   }
 
   private fail(message: string) {
+    this.postDebug("error", { source: "session", message });
     this.error = message;
     this.phase = "idle";
     this.emit();
+  }
+
+  private postDebug(event: string, fields: Record<string, unknown> = {}) {
+    void fetch("/api/debug/events", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event,
+        sessionId: this.sessionId,
+        ...fields,
+      }),
+    }).catch(() => {});
   }
 
   private emit() {
@@ -375,11 +451,14 @@ export class ThirdWheelSession {
   }
 }
 
-async function fetchTempKey(usageType: "transcribe_websocket" | "tts_rt") {
+async function fetchTempKey(
+  usageType: "transcribe_websocket" | "tts_rt",
+  sessionId: string,
+) {
   const response = await fetch("/api/soniox/temporary-key", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ usageType }),
+    body: JSON.stringify({ usageType, sessionId }),
   });
   const data = (await response.json()) as { apiKey?: string };
   if (!response.ok || !data.apiKey) {

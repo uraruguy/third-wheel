@@ -1,4 +1,5 @@
 import type { Source } from "./types";
+import { normalizeSpeech } from "./wake-phrase";
 
 export type SpeakParse =
   | { speak: false }
@@ -154,4 +155,103 @@ function hostname(url: string): string {
   } catch {
     return url;
   }
+}
+
+const STOP_WORDS = new Set([
+  "the",
+  "a",
+  "an",
+  "is",
+  "are",
+  "was",
+  "were",
+  "to",
+  "of",
+  "and",
+  "or",
+  "in",
+  "on",
+  "for",
+  "it",
+  "you",
+  "i",
+  "we",
+  "they",
+  "this",
+  "that",
+  "what",
+  "about",
+  "talking",
+  "your",
+  "my",
+  "be",
+  "do",
+  "did",
+  "so",
+  "just",
+  "not",
+  "no",
+  "yes",
+  "kaj",
+  "je",
+  "to",
+  "si",
+  "sem",
+  "pa",
+  "za",
+  "na",
+  "se",
+  "bi",
+  "ali",
+  "how",
+  "why",
+  "when",
+  "who",
+  "with",
+  "from",
+  "have",
+  "has",
+  "had",
+  "but",
+]);
+
+export function contentWords(text: string): string[] {
+  return normalizeSpeech(text)
+    .split(" ")
+    .filter((word) => word.length > 2 && !STOP_WORDS.has(word));
+}
+
+export function isClarifyingAsk(text: string): boolean {
+  const normalized = normalizeSpeech(text);
+  return /what are you talking about|what did you (say|mean)|kaj (je|si) to|kaj (si|je) (rekel|rekla)|o cem govori|what was that/.test(
+    normalized,
+  );
+}
+
+export function replyDriftsFromContext(input: {
+  reply: string;
+  latestSpeech: string;
+  lastSpokenTurn: string;
+  followUpQuery?: string;
+}): boolean {
+  const replyWords = contentWords(input.reply);
+  if (replyWords.length === 0) return true;
+
+  const lastClaim = contentWords(input.lastSpokenTurn);
+  const ask = contentWords(`${input.followUpQuery ?? ""} ${input.latestSpeech}`);
+  const askText = `${input.followUpQuery ?? ""} ${input.latestSpeech}`;
+
+  if (isClarifyingAsk(askText) && lastClaim.length > 0) {
+    return overlapRatio(replyWords, lastClaim) < 0.12;
+  }
+
+  const allowed = [...new Set([...lastClaim, ...ask])];
+  if (allowed.length === 0) return false;
+  return overlapRatio(replyWords, allowed) < 0.08 && lastClaim.length > 0;
+}
+
+function overlapRatio(reply: string[], allowed: string[]): number {
+  const set = new Set(allowed);
+  const hits = reply.filter((word) => set.has(word)).length;
+  return hits / Math.max(reply.length, 1);
 }

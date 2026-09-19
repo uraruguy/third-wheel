@@ -17,6 +17,9 @@ V `.env.local` nastavi:
 ```
 SONIOX_API_KEY=
 OPENROUTER_API_KEY=
+DEBUG_LOG_SECRET=
+UPSTASH_REDIS_REST_URL=
+UPSTASH_REDIS_REST_TOKEN=
 ```
 
 Ključa nikoli ne committaj. `.env.local` je v `.gitignore`.
@@ -48,7 +51,17 @@ npm run lint
 npm test
 ```
 
-Testi: wake phrase, pragovi Jev, okna transkripta, parsiranje `NO_SPEAK`.
+Testi: wake phrase, pragovi Jev, okna transkripta, parsiranje `NO_SPEAK`, anti-drift, debate, follow-up.
+
+## Debug dogodki
+
+`GET /api/debug/events` vrne zadnjih ~500 dogodkov (Upstash Redis, sicer pomnilnik). V produkciji brez `DEBUG_LOG_SECRET` vrne 401.
+
+```bash
+curl -H "Authorization: Bearer $DEBUG_LOG_SECRET" https://<app>/api/debug/events
+# ali
+curl "https://<app>/api/debug/events?secret=$DEBUG_LOG_SECRET"
+```
 
 ## Stack
 

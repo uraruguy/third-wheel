@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { isNoSpeakPrefix, parseSpeakResponse } from "../lib/no-speak";
+import { isNoSpeakPrefix, parseSpeakResponse, replyDriftsFromContext } from "../lib/no-speak";
 
 describe("NO_SPEAK parsing", () => {
   it("treats exact NO_SPEAK as silence", () => {
@@ -45,5 +45,35 @@ describe("NO_SPEAK parsing", () => {
     assert.equal(isNoSpeakPrefix("NO"), null);
     assert.equal(isNoSpeakPrefix("NO_SPEAK"), true);
     assert.equal(isNoSpeakPrefix("Triglav is"), false);
+  });
+
+  it("treats a topic-changing reply as drift that must NO_SPEAK", () => {
+    const drifted = replyDriftsFromContext({
+      reply: "You should change the button color to blue.",
+      latestSpeech: "What are you talking about, Third Wheel?",
+      lastSpokenTurn: "The United States is a country in North America.",
+    });
+    const onTopic = replyDriftsFromContext({
+      reply: "I meant the United States is a country in North America.",
+      latestSpeech: "What are you talking about, Third Wheel?",
+      lastSpokenTurn: "The United States is a country in North America.",
+    });
+    assert.equal(drifted, true);
+    assert.equal(onTopic, false);
+  });
+
+  it("treats kaj je to as a request to stay on the last claim", () => {
+    const drifted = replyDriftsFromContext({
+      reply: "Blue would look better on that button.",
+      latestSpeech: "kaj je to?",
+      lastSpokenTurn: "The United States is a country in North America.",
+    });
+    const onTopic = replyDriftsFromContext({
+      reply: "I was talking about the United States in North America.",
+      latestSpeech: "kaj je to?",
+      lastSpokenTurn: "The United States is a country in North America.",
+    });
+    assert.equal(drifted, true);
+    assert.equal(onTopic, false);
   });
 });

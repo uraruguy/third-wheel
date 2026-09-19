@@ -16,6 +16,8 @@ export const SONIOX_TTS_SAMPLE_RATE = 24_000;
 export const SONIOX_STT_SAMPLE_RATE = 16_000;
 
 export const CORRECTION_THRESHOLD = 0.82;
+export const DEBATE_THRESHOLD = 0.55;
+export const DEBATE_CORRECTION_THRESHOLD = 0.93;
 export const LOOKUP_THRESHOLD = 0.25;
 export const FOLLOWUP_THRESHOLD = 0.4;
 export const NEEDS_WEB_THRESHOLD = 0.5;

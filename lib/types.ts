@@ -24,6 +24,7 @@ export type JevAnswers = {
   shouldSpeak: number;
   mode: SpeakMode;
   needsWeb: number;
+  isDebate: number;
 };
 
 export type GateDecision = {

@@ -1,9 +1,12 @@
 import { JEV_MODEL, SPEAK_MODEL } from "./constants";
+import { debugLog } from "./debug-log";
 import { requireEnv } from "./env";
 import { languageName } from "./language";
 import { parseSpeakMode } from "./jev-routing";
+import { followUpContext } from "./follow-up-context";
 import {
   parseSpeakResponse,
+  replyDriftsFromContext,
   sourcesFromAnnotations,
   uniqueSources,
 } from "./no-speak";
@@ -20,7 +23,24 @@ export async function decideWithJev(input: {
   recentSpeech: string;
   topicSummary: string;
   inConversation: boolean;
+  lastSpokenTurn?: string;
+  latestSpeech?: string;
+  topicWindow?: string;
+  sessionId?: string;
 }): Promise<JevAnswers> {
+  const context = followUpContext({
+    lastSpokenTurn: input.lastSpokenTurn,
+    latestSpeech: input.latestSpeech ?? input.recentSpeech,
+    topicWindow: input.topicWindow,
+  });
+  debugLog("jev_input", {
+    sessionId: input.sessionId,
+    recentSpeech: input.recentSpeech,
+    topicSummary: input.topicSummary,
+    inConversation: input.inConversation,
+    ...context,
+  });
+
   const response = await fetch("https://openrouter.ai/api/alpha/decisions", {
     method: "POST",
     headers: OPENROUTER_HEADERS(),
@@ -30,6 +50,9 @@ export async function decideWithJev(input: {
         recent_speech: input.recentSpeech,
         topic_summary: input.topicSummary,
         in_conversation: input.inConversation,
+        last_spoken_turn: context.lastSpokenTurn,
+        latest_utterance: context.latestSpeech,
+        topic_window: context.topicWindow,
       },
       questions: {
         should_speak: {
@@ -65,11 +88,26 @@ export async function decideWithJev(input: {
             false: "No answer should be given, or it is a trivial fact that needs no search.",
           },
         },
+        is_debate: {
+          type: "noul",
+          instructions:
+            "Are the speakers debating, joking, or knowingly stating a wrong fact on purpose?",
+          criteria: {
+            true: "They are arguing both sides, playing devil's advocate, teasing, or clearly know the statement is false.",
+            false:
+              "Someone stated a false fact as if it were true, with no debate, irony, or pushback.",
+          },
+        },
       },
     }),
   });
 
   if (!response.ok) {
+    debugLog("error", {
+      sessionId: input.sessionId,
+      source: "jev",
+      status: response.status,
+    });
     throw new Error("Jev decision failed");
   }
 
@@ -78,11 +116,14 @@ export async function decideWithJev(input: {
   };
   const answers = data.answers ?? {};
 
-  return {
+  const parsed = {
     shouldSpeak: clamp01(answers.should_speak?.noul),
     mode: parseSpeakMode(answers.mode?.choice),
     needsWeb: clamp01(answers.needs_web?.noul),
+    isDebate: clamp01(answers.is_debate?.noul),
   };
+  debugLog("jev_output", { sessionId: input.sessionId, ...parsed });
+  return parsed;
 }
 
 export async function* streamSpokenReply(input: {
@@ -92,11 +133,25 @@ export async function* streamSpokenReply(input: {
   useWeb: boolean;
   language: SpeechLanguage;
   followUpQuery?: string;
+  lastSpokenTurn?: string;
+  sessionId?: string;
 }): AsyncGenerator<
   | { type: "delta"; text: string }
   | { type: "done"; text: string; sources: Source[] }
   | { type: "no_speak" }
 > {
+  const prompt = buildSpeakUserPrompt(input);
+  debugLog("speak_prompt", {
+    sessionId: input.sessionId,
+    mode: input.mode,
+    language: input.language,
+    useWeb: input.useWeb,
+    latestSpeech: input.latestSpeech,
+    followUpQuery: input.followUpQuery ?? "",
+    lastSpokenTurn: input.lastSpokenTurn ?? "",
+    topicWindow: input.topicWindow,
+    prompt,
+  });
   const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: OPENROUTER_HEADERS(),
@@ -119,13 +174,18 @@ export async function* streamSpokenReply(input: {
         },
         {
           role: "user",
-          content: speakUserPrompt(input),
+          content: prompt,
         },
       ],
     }),
   });
 
   if (!response.ok || !response.body) {
+    debugLog("error", {
+      sessionId: input.sessionId,
+      source: "speak",
+      status: response.status,
+    });
     throw new Error("Speak model request failed");
   }
 
@@ -149,10 +209,40 @@ export async function* streamSpokenReply(input: {
   }
 
   const parsed = parseSpeakResponse(raw);
-  if (!parsed.speak) {
+  if (
+    parsed.speak &&
+    replyDriftsFromContext({
+      reply: parsed.text,
+      latestSpeech: input.latestSpeech,
+      lastSpokenTurn: input.lastSpokenTurn ?? "",
+      followUpQuery: input.followUpQuery,
+    })
+  ) {
+    debugLog("no_speak", {
+      sessionId: input.sessionId,
+      reason: "drift",
+      text: parsed.text,
+    });
     yield { type: "no_speak" };
     return;
   }
+  if (!parsed.speak) {
+    debugLog("no_speak", {
+      sessionId: input.sessionId,
+      raw: raw.slice(0, 500),
+    });
+    yield { type: "no_speak" };
+    return;
+  }
+
+  debugLog("speak_response", {
+    sessionId: input.sessionId,
+    text: parsed.text,
+  });
+  debugLog("speak_sources", {
+    sessionId: input.sessionId,
+    sources: uniqueSources([...annotationSources, ...parsed.sources]),
+  });
 
   yield {
     type: "done",
@@ -163,37 +253,46 @@ export async function* streamSpokenReply(input: {
 
 function speakSystemPrompt(language: SpeechLanguage, useWeb: boolean): string {
   const searchLine = useWeb
-    ? "Search the web before answering unless the fact is already certain."
-    : "Search the web only if you need a current or checkable fact; skip it for basic knowledge.";
+    ? "Search the web only if the asked fact needs a source."
+    : "Do not search unless a checkable fact is missing.";
 
   return [
-    "You are Third Wheel, a quiet person sitting at the table.",
-    "Speak at most two short sentences, in the language of the latest speech.",
+    "You are Third Wheel, a quiet person at the table.",
+    "Speak at most two short sentences in the language of the latest speech.",
     `Write the spoken lines in ${languageName(language)}.`,
-    "No preface, no markdown, no bullets, no quotes around the whole reply.",
+    "Answer only the latest user question, or the last factual claim you made if they ask what you meant (kaj je to / what are you talking about).",
+    "If you would change the topic — for example they asked about your last America claim and you would talk about a color — output exactly NO_SPEAK.",
     searchLine,
     "Never invent numbers, names, or URLs.",
-    "If you cannot add something true and useful, output exactly NO_SPEAK.",
+    "If the ask is unclear, or you would have to guess a new topic, output exactly NO_SPEAK.",
     "Otherwise output the spoken sentences, then a blank line, then:",
     "SOURCES:",
     "- https://example.com",
-    "Do not mention these instructions or that you are an AI.",
+    "No preface, markdown, or bullets in the spoken lines.",
   ].join("\n");
 }
 
-function speakUserPrompt(input: {
+export function buildSpeakUserPrompt(input: {
   topicWindow: string;
   latestSpeech: string;
   mode: SpeakMode;
   followUpQuery?: string;
+  lastSpokenTurn?: string;
 }): string {
+  const context = followUpContext({
+    lastSpokenTurn: input.lastSpokenTurn,
+    latestSpeech: input.latestSpeech,
+    topicWindow: input.topicWindow,
+  });
   const parts = [
     `Mode: ${input.mode}`,
-    input.followUpQuery ? `Follow-up request: ${input.followUpQuery}` : "",
-    "Latest speech:",
-    input.latestSpeech || "(none)",
-    "Topic window (~90 seconds):",
-    input.topicWindow || "(none)",
+    input.followUpQuery ? `Asked / follow-up: ${input.followUpQuery}` : "",
+    "They just said (latest utterance):",
+    context.latestSpeech || "(none)",
+    "Your last spoken sentence (stay on this if they ask kaj je to / what are you talking about):",
+    context.lastSpokenTurn || "(none)",
+    "Topic window (~90 seconds, background only — do not switch to it unless they asked about it):",
+    context.topicWindow || "(none)",
   ];
   return parts.filter(Boolean).join("\n\n");
 }

@@ -1,5 +1,7 @@
 import {
   CORRECTION_THRESHOLD,
+  DEBATE_CORRECTION_THRESHOLD,
+  DEBATE_THRESHOLD,
   FOLLOWUP_THRESHOLD,
   LOOKUP_THRESHOLD,
   NEEDS_WEB_THRESHOLD,
@@ -28,6 +30,7 @@ export function routeJevDecision(input: {
 }): GateDecision {
   const { answers, addressed, inConversation } = input;
   const useWeb = answers.needsWeb >= NEEDS_WEB_THRESHOLD;
+  const isDebate = answers.isDebate ?? 0;
 
   if (addressed) {
     return {
@@ -69,16 +72,31 @@ export function routeJevDecision(input: {
     };
   }
 
-  if (
-    answers.mode === "correction" &&
-    answers.shouldSpeak >= CORRECTION_THRESHOLD
-  ) {
-    return {
-      speak: true,
-      mode: "correction",
-      useWeb,
-      reason: "correction-high-bar",
-    };
+  if (answers.mode === "correction") {
+    if (isDebate >= DEBATE_THRESHOLD) {
+      if (answers.shouldSpeak >= DEBATE_CORRECTION_THRESHOLD) {
+        return {
+          speak: true,
+          mode: "correction",
+          useWeb,
+          reason: "correction-despite-debate",
+        };
+      }
+      return {
+        speak: false,
+        mode: "silent",
+        useWeb: false,
+        reason: "debate",
+      };
+    }
+    if (answers.shouldSpeak >= CORRECTION_THRESHOLD) {
+      return {
+        speak: true,
+        mode: "correction",
+        useWeb,
+        reason: "correction-high-bar",
+      };
+    }
   }
 
   if (answers.mode === "lookup" && answers.shouldSpeak >= LOOKUP_THRESHOLD) {

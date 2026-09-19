@@ -1,18 +1,30 @@
 import { NextResponse } from "next/server";
+import { debugLog } from "@/lib/debug-log";
 import { routeJevDecision } from "@/lib/jev-routing";
 import { decideWithJev } from "@/lib/openrouter";
 
 export async function POST(request: Request) {
+  let sessionId: string | undefined;
   try {
     const body = (await request.json()) as {
       recentSpeech?: string;
       topicSummary?: string;
       inConversation?: boolean;
       addressed?: boolean;
+      lastSpokenTurn?: string;
+      latestSpeech?: string;
+      topicWindow?: string;
+      sessionId?: string;
     };
+    sessionId = body.sessionId;
 
     const recentSpeech = (body.recentSpeech ?? "").trim();
     if (!recentSpeech) {
+      debugLog("jev_output", {
+        sessionId,
+        speak: false,
+        reason: "empty-speech",
+      });
       return NextResponse.json({
         speak: false,
         mode: "silent",
@@ -22,6 +34,11 @@ export async function POST(request: Request) {
     }
 
     if (body.addressed) {
+      debugLog("wake", {
+        sessionId,
+        reason: "wake-or-addressed",
+        recentSpeech,
+      });
       return NextResponse.json({
         speak: true,
         mode: "addressed",
@@ -34,16 +51,21 @@ export async function POST(request: Request) {
       recentSpeech,
       topicSummary: body.topicSummary ?? "",
       inConversation: Boolean(body.inConversation),
+      lastSpokenTurn: body.lastSpokenTurn,
+      latestSpeech: body.latestSpeech ?? recentSpeech,
+      topicWindow: body.topicWindow,
+      sessionId,
     });
 
-    return NextResponse.json(
-      routeJevDecision({
-        answers,
-        addressed: false,
-        inConversation: Boolean(body.inConversation),
-      }),
-    );
+    const decision = routeJevDecision({
+      answers,
+      addressed: false,
+      inConversation: Boolean(body.inConversation),
+    });
+    debugLog("jev_output", { sessionId, ...decision, answers });
+    return NextResponse.json(decision);
   } catch {
+    debugLog("error", { sessionId, source: "decide" });
     return NextResponse.json({
       speak: false,
       mode: "silent",
