@@ -7,6 +7,12 @@ import {
   topicWindow,
 } from "../transcript-window";
 import type { Source, SpeakMode, SpeechLanguage, TranscriptUtterance } from "../types";
+import {
+  actionForIncoming,
+  commitSpoken,
+  spokenAfterInterrupt,
+  type IncomingKind,
+} from "../turn-lock";
 import { detectFollowUp, detectWakePhrase, planUtterance } from "../wake-phrase";
 import { startMicCapture, type CaptureHandle } from "./mic";
 import { SonioxSttClient } from "./stt";
@@ -46,6 +52,7 @@ export class ThirdWheelSession {
   private lastWakePartialAt = 0;
   private pendingNameOnly = false;
   private ignoreJevUntil = 0;
+  private inFlight = false;
   private running = false;
   private sessionId = "";
 
@@ -66,6 +73,7 @@ export class ThirdWheelSession {
     this.running = true;
     this.sessionId = crypto.randomUUID();
     this.pendingNameOnly = false;
+    this.inFlight = false;
     this.error = null;
     this.setPhase("listening");
     try {
@@ -98,9 +106,11 @@ export class ThirdWheelSession {
     this.conversationTimer = null;
     this.conversationUntil = 0;
     this.pendingNameOnly = false;
+    this.inFlight = false;
     this.sessionId = "";
     this.phase = "idle";
     this.partial = "";
+    this.spoken = spokenAfterInterrupt(this.spoken);
     this.emit();
   }
 
@@ -125,7 +135,7 @@ export class ThirdWheelSession {
       this.lastWakePartialAt = Date.now();
     }
 
-    if (this.inConversation) {
+    if (this.inConversation && !this.inFlight) {
       const follow = detectFollowUp(text);
       if (follow.matched && !echo) {
         this.postDebug("follow_up", { source: "partial", query: follow.query, text });
@@ -142,6 +152,8 @@ export class ThirdWheelSession {
       echo,
       pendingNameOnly: this.pendingNameOnly,
       ttsPlaying: this.tts.isPlaying,
+      inFlight: this.inFlight,
+      phase: this.phase,
     });
 
     const plan = planUtterance({
@@ -160,25 +172,26 @@ export class ThirdWheelSession {
     this.emit();
 
     if (plan.action === "wait-for-question") {
+      this.beginTurn("name-call", utterance.text);
       this.pendingNameOnly = true;
+      this.inFlight = false;
       this.postDebug("wake", {
         source: "endpoint",
         nameOnly: true,
         text: utterance.text,
       });
-      if (this.tts.isPlaying) this.tts.bargeIn();
       this.setPhase("listening");
       return;
     }
 
     if (plan.action === "speak-addressed") {
+      this.beginTurn("name-call", utterance.text);
       this.pendingNameOnly = false;
       this.postDebug("wake", {
         source: "endpoint",
         question: plan.question,
         text: utterance.text,
       });
-      if (this.tts.isPlaying) this.tts.bargeIn();
       void this.speakNow({
         mode: "addressed",
         latestSpeech: utterance.text,
@@ -191,8 +204,8 @@ export class ThirdWheelSession {
 
     const follow = detectFollowUp(utterance.text);
     if (this.inConversation && follow.matched) {
+      if (!this.beginTurn("followup", utterance.text)) return;
       this.postDebug("follow_up", { source: "endpoint", query: follow.query });
-      if (this.tts.isPlaying) this.tts.bargeIn();
       void this.speakNow({
         mode: "followup",
         latestSpeech: utterance.text,
@@ -203,13 +216,30 @@ export class ThirdWheelSession {
       return;
     }
 
-    if (this.tts.isPlaying || this.phase === "thinking" || this.phase === "speaking") {
+    if (now - this.lastWakePartialAt < 2500) return;
+
+    if (!this.beginTurn("jev", utterance.text)) return;
+    if (now < this.ignoreJevUntil) {
+      this.inFlight = false;
       return;
     }
 
-    if (now < this.ignoreJevUntil) return;
-
     void this.decide(utterance);
+  }
+
+  private beginTurn(kind: IncomingKind, text = ""): boolean {
+    const action = actionForIncoming(this.inFlight, kind);
+    if (action === "drop") {
+      this.postDebug("turn_drop", { kind, text });
+      return false;
+    }
+    if (action === "barge") {
+      this.generation += 1;
+      this.tts.bargeIn();
+      this.spoken = spokenAfterInterrupt(this.spoken);
+    }
+    this.inFlight = true;
+    return true;
   }
 
   private async decide(utterance: TranscriptUtterance) {
@@ -238,6 +268,7 @@ export class ThirdWheelSession {
       };
       if (generation !== this.generation || !this.running) return;
       if (!decision.speak) {
+        this.inFlight = false;
         this.setPhase("listening");
         return;
       }
@@ -250,7 +281,10 @@ export class ThirdWheelSession {
       });
     } catch {
       this.postDebug("error", { source: "decide" });
-      if (generation === this.generation) this.setPhase("listening");
+      if (generation === this.generation) {
+        this.inFlight = false;
+        this.setPhase("listening");
+      }
     }
   }
 
@@ -264,6 +298,7 @@ export class ThirdWheelSession {
   }) {
     if (this.tts.isPlaying) this.tts.bargeIn();
     const generation = input.generation ?? ++this.generation;
+    this.inFlight = true;
     this.setPhase("speaking");
 
     const language =
@@ -271,6 +306,7 @@ export class ThirdWheelSession {
       this.utterances.at(-1)?.language ??
       inferLatestLanguage(input.latestSpeech);
 
+    const previousSpoken = this.spoken;
     let assembled = "";
     let sources: Source[] = [];
     let aborted = false;
@@ -278,6 +314,7 @@ export class ThirdWheelSession {
     let ttsReady = false;
     let sentToTts = "";
     let spoke = false;
+    let turnCommitted = false;
 
     const ensureTts = async () => {
       if (ttsReady) return;
@@ -353,29 +390,34 @@ export class ThirdWheelSession {
           }
           if (event.type === "no_speak") {
             aborted = true;
-            this.tts.bargeIn();
+            if (!turnCommitted) this.spoken = previousSpoken;
+            this.emit();
             break;
           }
           if (event.type === "delta" && event.text) {
             assembled += event.text;
-            this.spoken = {
-              text: spokenTextForTts(assembled) || assembled,
+            const preview = spokenTextForTts(assembled) || assembled;
+            this.spoken = commitSpoken(this.spoken, {
+              text: preview,
               sources,
               mode: input.mode,
-            };
+            });
             this.emit();
-            await flushTts(assembled, false);
           }
           if (event.type === "done") {
             assembled = event.text || assembled;
             sources = event.sources ?? sources;
-            this.spoken = {
-              text: spokenTextForTts(assembled),
+            const finalText = spokenTextForTts(assembled);
+            this.spoken = commitSpoken(previousSpoken, {
+              text: finalText,
               sources,
               mode: input.mode,
-            };
+            });
+            if (this.spoken) {
+              this.lastSpokenText = this.spoken.text;
+              turnCommitted = true;
+            }
             this.emit();
-            await flushTts(assembled, true);
           }
         }
         if (aborted) break;
@@ -383,23 +425,31 @@ export class ThirdWheelSession {
 
       const finalText = spokenTextForTts(assembled);
       if (!aborted && finalText) {
-        if (!endedSent) await flushTts(assembled, true);
-        this.lastSpokenText = finalText;
-        this.spoken = {
+        this.spoken = commitSpoken(previousSpoken, {
           text: finalText,
           sources,
           mode: input.mode,
-        };
+        });
+        if (this.spoken) this.lastSpokenText = this.spoken.text;
+        turnCommitted = true;
+        this.emit();
+        if (!endedSent) await flushTts(assembled, true);
         spoke = true;
         await this.tts.waitUntilIdle();
+      } else if (!turnCommitted) {
+        this.spoken = spokenAfterInterrupt(previousSpoken);
+        this.emit();
       }
     } catch {
       this.postDebug("error", { source: "speak" });
       this.tts.bargeIn();
+      if (!turnCommitted) this.spoken = spokenAfterInterrupt(previousSpoken);
     } finally {
       if (generation === this.generation) {
         this.capture?.setGain(1);
         this.ignoreJevUntil = Date.now() + 1200;
+        this.inFlight = false;
+        this.spoken = spokenAfterInterrupt(this.spoken);
         if (this.running) {
           if (spoke) this.openConversationWindow();
           this.setPhase("listening");

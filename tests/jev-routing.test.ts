@@ -23,14 +23,19 @@ describe("Jev threshold routing", () => {
     assert.equal(decision.mode, "addressed");
   });
 
-  it("always speaks when Jev marks addressed", () => {
+  it("does not speak when Jev marks addressed without a name-call", () => {
     const decision = routeJevDecision({
-      answers: answers({ shouldSpeak: 0.2, mode: "addressed", needsWeb: 0.3 }),
+      answers: answers({
+        shouldSpeak: 0.7,
+        mode: "addressed",
+        needsWeb: 0.74,
+        isDebate: 0.79,
+      }),
       addressed: false,
-      inConversation: false,
+      inConversation: true,
     });
-    assert.equal(decision.speak, true);
-    assert.equal(decision.mode, "addressed");
+    assert.equal(decision.speak, false);
+    assert.equal(decision.reason, "meta-not-addressed");
   });
 
   it("uses a high bar for unsolicited correction", () => {

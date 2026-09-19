@@ -43,10 +43,10 @@ export function routeJevDecision(input: {
 
   if (answers.mode === "addressed") {
     return {
-      speak: true,
-      mode: "addressed",
-      useWeb: true,
-      reason: "jev-addressed",
+      speak: false,
+      mode: "silent",
+      useWeb: false,
+      reason: "meta-not-addressed",
     };
   }
 

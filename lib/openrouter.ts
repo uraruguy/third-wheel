@@ -74,7 +74,8 @@ export async function decideWithJev(input: {
               "Someone stated a checkable fact that is likely wrong and worth a polite correction.",
             lookup:
               "They do not know a number, name, date, or similar fact and would benefit from a lookup.",
-            addressed: "They spoke to Third Wheel by name or asked it directly.",
+            addressed:
+              "They said the name Third Wheel (hey/hej third wheel) in this utterance. Talking about whether he will join, or saying continue so we see if he speaks, is not addressed.",
             followup:
               "They are revising the previous Third Wheel answer (for example search for X instead).",
           },

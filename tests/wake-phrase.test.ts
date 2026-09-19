@@ -47,6 +47,22 @@ describe("wake phrase detection", () => {
     assert.equal(result.matched, false);
   });
 
+  it("does not treat meta talk about him joining as a name-call", () => {
+    const result = detectWakePhrase(
+      "Dajmo zdaj še malo nadaljevat, da vidimo, če bo sam on.",
+    );
+    assert.equal(result.matched, false);
+    assert.equal(
+      planUtterance({
+        text: "Dajmo zdaj še malo nadaljevat, da vidimo, če bo sam on.",
+        lastSpokenText: "Da, Elon Musk je trenutno najbogatejši človek na svetu.",
+        pendingNameOnly: false,
+        isEcho: false,
+      }).action,
+      "jev",
+    );
+  });
+
   it("normalizes punctuation and case", () => {
     assert.equal(normalizeSpeech("HEY, Third-Wheel!"), "hey third wheel");
     assert.equal(detectWakePhrase("HEY, Third-Wheel!").matched, true);
