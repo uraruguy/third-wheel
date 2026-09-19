@@ -76,12 +76,15 @@ export function planUtterance(input: {
     if (input.isEcho && !wake.matched) return { action: "ignore-echo" };
     if (wake.matched && wake.nameOnly) return { action: "wait-for-question" };
     if (wake.matched && !wake.nameOnly) {
-      return { action: "speak-addressed", question: wake.remainder };
+      if (looksLikeAddressedQuestion(wake.remainder)) {
+        return { action: "speak-addressed", question: wake.remainder };
+      }
+      return { action: "wait-for-question" };
     }
     if (looksLikeAddressedQuestion(input.text)) {
       return { action: "speak-addressed", question: input.text.trim() };
     }
-    return { action: "jev" };
+    return { action: "wait-for-question" };
   }
 
   if (input.isEcho && !wake.matched) return { action: "ignore-echo" };
@@ -92,6 +95,9 @@ export function planUtterance(input: {
 
   if (!wake.matched) return { action: "jev" };
   if (wake.nameOnly) return { action: "wait-for-question" };
+  if (!looksLikeAddressedQuestion(wake.remainder)) {
+    return { action: "wait-for-question" };
+  }
   return { action: "speak-addressed", question: wake.remainder };
 }
 
@@ -120,24 +126,53 @@ export function detectFollowUp(text: string): {
   return { matched: false, query: "" };
 }
 
-const QUESTION_SHAPE =
-  /\?|\b(povej|preveri|poi(?:s|š)[cč]i|who|kdo|what|kaj|koliko|kateri|which|how|why|kdaj|when|where|a je)\b/i;
+const INTERROGATIVE =
+  /\?|\b(who|kdo|what|kaj|koliko|kateri|which|how|why|kdaj|when|where|a je|preveri|poi(?:s|š)[cč]i)\b/i;
 const BANTER =
   /\b(punca|punco|punce|girlfriend|boyfriend|moj fant|moja zena|my wife|sala)\b/;
 const CHECKABLE_ASK =
-  /\b(povej|preveri|poi(?:s|š)[cč]i|who|kdo|koliko|kateri|which|how many|predsednik|leta|kaj)\b/;
+  /\b(preveri|poi(?:s|š)[cč]i|who|kdo|koliko|kateri|which|how many|predsednik|leta|kaj)\b/;
+const PROMPT_ONLY = new Set([
+  "daj",
+  "mi",
+  "povej",
+  "please",
+  "tell",
+  "me",
+  "hej",
+  "hey",
+  "a",
+  "ves",
+  "prosim",
+]);
 
 export function looksLikeAddressedQuestion(text: string): boolean {
   const trimmed = text.trim();
   if (!trimmed) return false;
   const n = normalizeSpeech(trimmed);
-  if (!QUESTION_SHAPE.test(n) && !/\?/.test(trimmed)) return false;
-  if (BANTER.test(n) && !CHECKABLE_ASK.test(n) && !hasProperName(trimmed)) {
+  if (!n) return false;
+  if (BANTER.test(n) && !CHECKABLE_ASK.test(n) && !hasEntity(trimmed)) {
     return false;
   }
-  return true;
+  if (isBareTellPrompt(n)) return false;
+  if (hasEntity(trimmed)) return true;
+  if (INTERROGATIVE.test(n) || /\?/.test(trimmed)) {
+    return hasContentBeyondPrompt(n);
+  }
+  return false;
 }
 
-function hasProperName(text: string): boolean {
-  return /[A-ZČŠŽ][a-zčšž]+(?:\s+[A-ZČŠŽ][a-zčšž]+)+/.test(text);
+function isBareTellPrompt(normalized: string): boolean {
+  const words = normalized.split(" ").filter(Boolean);
+  return words.length > 0 && words.every((word) => PROMPT_ONLY.has(word));
+}
+
+function hasContentBeyondPrompt(normalized: string): boolean {
+  return normalized.split(" ").some((word) => word.length > 1 && !PROMPT_ONLY.has(word));
+}
+
+function hasEntity(text: string): boolean {
+  if (/[A-ZČŠŽ][a-zčšž]+(?:\s+[A-ZČŠŽ][a-zčšž]+)+/.test(text)) return true;
+  const singles = text.match(/[A-ZČŠŽ][A-Za-zČčŠšŽž]{2,}/g) ?? [];
+  return singles.some((word) => !/^(je|a|ali|kaj|kdo|hey|hej|the|and)$/i.test(word));
 }

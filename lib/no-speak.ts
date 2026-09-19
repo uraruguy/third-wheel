@@ -1,4 +1,4 @@
-import type { Source } from "./types";
+import type { Source, SpeakMode, SpeechLanguage } from "./types";
 import { normalizeSpeech } from "./wake-phrase";
 
 export type SpeakParse =
@@ -231,6 +231,14 @@ export function isClarifyingAsk(text: string): boolean {
   return /what are you talking about|what did you (say|mean)|kaj (je|si) to|kaj (si|je) (rekel|rekla)|kaj govori|o cem govori|what was that/.test(
     normalized,
   );
+}
+
+export function discardReplyAsDrift(mode: SpeakMode, drifted: boolean): boolean {
+  return drifted && mode !== "addressed";
+}
+
+export function addressedFallback(language: SpeechLanguage): string {
+  return language === "sl" ? "Ne vem." : "I don't know.";
 }
 
 export function replyDriftsFromContext(input: {

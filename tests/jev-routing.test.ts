@@ -38,20 +38,21 @@ describe("Jev threshold routing", () => {
     assert.equal(decision.reason, "meta-not-addressed");
   });
 
-  it("uses a high bar for unsolicited correction", () => {
+  it("speaks a correction at shouldSpeak 0.55 and stays quiet below 0.5", () => {
     const weak = routeJevDecision({
-      answers: answers({ shouldSpeak: 0.6, mode: "correction", needsWeb: 0.9 }),
+      answers: answers({ shouldSpeak: 0.4, mode: "correction", needsWeb: 0.9 }),
       addressed: false,
       inConversation: false,
     });
-    const strong = routeJevDecision({
-      answers: answers({ shouldSpeak: 0.9, mode: "correction", needsWeb: 0.9 }),
+    const mid = routeJevDecision({
+      answers: answers({ shouldSpeak: 0.55, mode: "correction", needsWeb: 0.9 }),
       addressed: false,
       inConversation: false,
     });
     assert.equal(weak.speak, false);
-    assert.equal(strong.speak, true);
-    assert.equal(strong.mode, "correction");
+    assert.equal(mid.speak, true);
+    assert.equal(mid.mode, "correction");
+    assert.equal(mid.reason, "correction-high-bar");
   });
 
   it("corrects a joking false world fact even when Jev marks debate", () => {
@@ -107,47 +108,37 @@ describe("Jev threshold routing", () => {
     assert.equal(decision.reason, "self-corrected");
   });
 
-  it("stays silent when they are debating interpretation without a new false claim", () => {
+  it("does not use Jev is_debate alone to silence a mid-confidence correction", () => {
     const decision = routeJevDecision({
       answers: answers({
-        shouldSpeak: 0.9,
+        shouldSpeak: 0.61,
         mode: "correction",
-        needsWeb: 0.9,
+        needsWeb: 0.7,
         isDebate: 0.8,
       }),
       addressed: false,
       inConversation: false,
-      latestSpeech: "I still think that reading is fair.",
+      latestSpeech: "Ja, jaz mislim, da je bil 10. leta 2017 v Jugoslaviji.",
     });
-    assert.equal(decision.speak, false);
-    assert.equal(decision.reason, "debate");
+    assert.equal(decision.speak, true);
+    assert.equal(decision.mode, "correction");
+    assert.equal(decision.reason, "correction-world-fact");
   });
 
-  it("raises the correction bar during debate and only speaks at 0.93+", () => {
-    const almost = routeJevDecision({
+  it("corrects a Tito claim even when the line is a question", () => {
+    const decision = routeJevDecision({
       answers: answers({
-        shouldSpeak: 0.92,
+        shouldSpeak: 0.67,
         mode: "correction",
-        needsWeb: 0.9,
-        isDebate: 0.6,
+        needsWeb: 0.6,
+        isDebate: 0.4,
       }),
       addressed: false,
       inConversation: false,
+      latestSpeech: "Je bil Tito?",
     });
-    const over = routeJevDecision({
-      answers: answers({
-        shouldSpeak: 0.94,
-        mode: "correction",
-        needsWeb: 0.9,
-        isDebate: 0.6,
-      }),
-      addressed: false,
-      inConversation: false,
-    });
-    assert.equal(almost.speak, false);
-    assert.equal(almost.reason, "debate");
-    assert.equal(over.speak, true);
-    assert.equal(over.reason, "correction-despite-debate");
+    assert.equal(decision.speak, true);
+    assert.equal(decision.reason, "correction-world-fact");
   });
 
   it("still corrects a genuine false claim treated as true", () => {

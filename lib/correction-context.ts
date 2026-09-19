@@ -1,5 +1,34 @@
 import { normalizeSpeech } from "./wake-phrase";
 
+const YEAR = /\b(1[89]\d{2}|20\d{2})\b/;
+const CLAIM =
+  /\b(je|is|was|were|bil|bila|bili|bilo|naj|most|least|leta|ima|imel|imela)\b/;
+const FUNCTION_NAME =
+  /^(je|a|ali|kaj|kdo|kdaj|kje|the|and|this|that|hey|hej|i|we|they|he|she|it|in|on|at|to|of|za|v|na|po|leta|bil|bila|bilo|koliko|kateri|okay)$/i;
+const YEAR_STOP = new Set([
+  "leta",
+  "leto",
+  "year",
+  "circa",
+  "okoli",
+  "priblizno",
+  "jaz",
+  "mislim",
+  "da",
+  "bil",
+  "bila",
+  "bilo",
+  "je",
+  "ni",
+  "res",
+  "pa",
+  "ne",
+  "ja",
+  "okay",
+  "the",
+  "and",
+]);
+
 export function selfCorrectedInLine(text: string): boolean {
   const n = normalizeSpeech(text);
   if (!n) return false;
@@ -24,17 +53,26 @@ export function bothSidesAlreadyStated(recentSpeech: string): boolean {
 
 export function assertsCheckableWorldFact(text: string): boolean {
   const trimmed = text.trim();
-  if (!trimmed || /\?/.test(trimmed)) return false;
+  if (!trimmed) return false;
   const n = normalizeSpeech(trimmed);
-  const hasEntity =
-    hasProperName(trimmed) ||
-    /\b(elon|musk|triglav|slovenij|predsednik|francij|zuckerberg|holland|jan[sš]a|drnov[sš]ek|bratu[sš]ek)\b/.test(
-      n,
-    );
-  const hasClaim = /\b(je|is|was|bil|bila|naj|most|least)\b/.test(n);
-  return hasEntity && hasClaim;
+  if (!n) return false;
+
+  const year = YEAR.test(n);
+  const names = properNameTokens(trimmed);
+  const claim = CLAIM.test(n) || year;
+
+  if (year) {
+    const extras = n
+      .split(" ")
+      .filter((word) => word.length > 2 && !YEAR.test(word) && !YEAR_STOP.has(word));
+    if (names.length > 0 || extras.length > 0) return true;
+  }
+
+  return names.length > 0 && claim;
 }
 
-function hasProperName(text: string): boolean {
-  return /[A-ZČŠŽ][a-zčšž]+(?:\s+[A-ZČŠŽ][a-zčšž]+)+/.test(text);
+export function properNameTokens(text: string): string[] {
+  return (text.match(/[A-ZČŠŽ][A-Za-zČčŠšŽž]{2,}/g) ?? []).filter(
+    (word) => !FUNCTION_NAME.test(normalizeSpeech(word)),
+  );
 }

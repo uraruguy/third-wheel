@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { isNoSpeakPrefix, parseSpeakResponse, replyDriftsFromContext } from "../lib/no-speak";
+import {
+  addressedFallback,
+  discardReplyAsDrift,
+  isNoSpeakPrefix,
+  parseSpeakResponse,
+  replyDriftsFromContext,
+} from "../lib/no-speak";
 
 describe("NO_SPEAK parsing", () => {
   it("treats exact NO_SPEAK as silence", () => {
@@ -75,6 +81,14 @@ describe("NO_SPEAK parsing", () => {
     });
     assert.equal(drifted, true);
     assert.equal(onTopic, false);
+  });
+
+  it("never discards an addressed reply as drift", () => {
+    assert.equal(discardReplyAsDrift("addressed", true), false);
+    assert.equal(discardReplyAsDrift("lookup", true), true);
+    assert.equal(discardReplyAsDrift("correction", true), true);
+    assert.equal(addressedFallback("sl"), "Ne vem.");
+    assert.equal(addressedFallback("en"), "I don't know.");
   });
 
   it("treats a new subject as the current topic, not the last spoken turn", () => {

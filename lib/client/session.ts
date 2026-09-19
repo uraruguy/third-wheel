@@ -53,6 +53,9 @@ export class ThirdWheelSession {
   private pendingNameOnly = false;
   private ignoreJevUntil = 0;
   private inFlight = false;
+  private inFlightMode: SpeakMode | null = null;
+  private protectLookups = false;
+  private protectedAnchor = "";
   private running = false;
   private sessionId = "";
 
@@ -74,6 +77,9 @@ export class ThirdWheelSession {
     this.sessionId = crypto.randomUUID();
     this.pendingNameOnly = false;
     this.inFlight = false;
+    this.inFlightMode = null;
+    this.protectLookups = false;
+    this.protectedAnchor = "";
     this.error = null;
     this.setPhase("listening");
     try {
@@ -107,6 +113,9 @@ export class ThirdWheelSession {
     this.conversationUntil = 0;
     this.pendingNameOnly = false;
     this.inFlight = false;
+    this.inFlightMode = null;
+    this.protectLookups = false;
+    this.protectedAnchor = "";
     this.sessionId = "";
     this.phase = "idle";
     this.partial = "";
@@ -174,7 +183,10 @@ export class ThirdWheelSession {
     if (plan.action === "wait-for-question") {
       this.beginTurn("name-call", utterance.text);
       this.pendingNameOnly = true;
+      this.protectLookups = true;
+      this.protectedAnchor = utterance.text;
       this.inFlight = false;
+      this.inFlightMode = "addressed";
       this.postDebug("wake", {
         source: "endpoint",
         nameOnly: true,
@@ -187,6 +199,9 @@ export class ThirdWheelSession {
     if (plan.action === "speak-addressed") {
       this.beginTurn("name-call", utterance.text);
       this.pendingNameOnly = false;
+      this.protectLookups = true;
+      this.protectedAnchor = utterance.text;
+      this.inFlightMode = "addressed";
       this.postDebug("wake", {
         source: "endpoint",
         question: plan.question,
@@ -230,7 +245,13 @@ export class ThirdWheelSession {
   }
 
   private beginTurn(kind: IncomingKind, text = ""): boolean {
-    const action = actionForIncoming(this.inFlight, kind);
+    const action = actionForIncoming(this.inFlight, kind, {
+      inFlightMode: this.inFlightMode,
+      text,
+      anchorText: this.protectedAnchor || this.lastSpokenText,
+      pendingNameOnly: this.pendingNameOnly,
+      protectLookups: this.protectLookups,
+    });
     if (action === "drop") {
       this.postDebug("turn_drop", { kind, text });
       return false;
@@ -271,8 +292,14 @@ export class ThirdWheelSession {
       if (generation !== this.generation || !this.running) return;
       if (!decision.speak) {
         this.inFlight = false;
+        this.inFlightMode = null;
         this.setPhase("listening");
         return;
+      }
+      this.inFlightMode = decision.mode ?? "lookup";
+      if (this.inFlightMode === "correction" || this.inFlightMode === "addressed") {
+        this.protectLookups = true;
+        this.protectedAnchor = utterance.text;
       }
       await this.speakNow({
         mode: decision.mode ?? "lookup",
@@ -285,6 +312,7 @@ export class ThirdWheelSession {
       this.postDebug("error", { source: "decide" });
       if (generation === this.generation) {
         this.inFlight = false;
+        this.inFlightMode = null;
         this.setPhase("listening");
       }
     }
@@ -301,6 +329,11 @@ export class ThirdWheelSession {
     if (this.tts.isPlaying) this.tts.bargeIn();
     const generation = input.generation ?? ++this.generation;
     this.inFlight = true;
+    this.inFlightMode = input.mode;
+    if (input.mode === "addressed" || input.mode === "correction") {
+      this.protectLookups = true;
+      this.protectedAnchor = input.latestSpeech;
+    }
     this.setPhase("speaking");
 
     const language =
@@ -418,6 +451,7 @@ export class ThirdWheelSession {
             if (this.spoken) {
               this.lastSpokenText = this.spoken.text;
               turnCommitted = true;
+              this.protectLookups = false;
             }
             this.emit();
           }
@@ -434,6 +468,7 @@ export class ThirdWheelSession {
         });
         if (this.spoken) this.lastSpokenText = this.spoken.text;
         turnCommitted = true;
+        this.protectLookups = false;
         this.emit();
         if (!endedSent) await flushTts(assembled, true);
         spoke = true;
@@ -451,6 +486,7 @@ export class ThirdWheelSession {
         this.capture?.setGain(1);
         this.ignoreJevUntil = Date.now() + 1200;
         this.inFlight = false;
+        this.inFlightMode = turnCommitted ? null : this.inFlightMode;
         this.spoken = spokenAfterInterrupt(this.spoken);
         if (this.running) {
           if (spoke) this.openConversationWindow();

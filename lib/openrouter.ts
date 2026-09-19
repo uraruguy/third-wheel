@@ -5,6 +5,8 @@ import { languageName } from "./language";
 import { parseSpeakMode } from "./jev-routing";
 import { followUpContext } from "./follow-up-context";
 import {
+  addressedFallback,
+  discardReplyAsDrift,
   parseSpeakResponse,
   replyDriftsFromContext,
   sourcesFromAnnotations,
@@ -179,7 +181,7 @@ export async function* streamSpokenReply(input: {
       messages: [
         {
           role: "system",
-          content: speakSystemPrompt(input.language, input.useWeb),
+          content: speakSystemPrompt(input.language, input.useWeb, input.mode),
         },
         {
           role: "user",
@@ -218,7 +220,7 @@ export async function* streamSpokenReply(input: {
   }
 
   const parsed = parseSpeakResponse(raw);
-  if (
+  const drifted =
     parsed.speak &&
     replyDriftsFromContext({
       reply: parsed.text,
@@ -226,8 +228,8 @@ export async function* streamSpokenReply(input: {
       lastSpokenTurn: input.lastSpokenTurn ?? "",
       followUpQuery: input.followUpQuery,
       priorUtterance: topic.priorUtterance,
-    })
-  ) {
+    });
+  if (drifted && discardReplyAsDrift(input.mode, true)) {
     debugLog("no_speak", {
       sessionId: input.sessionId,
       reason: "drift",
@@ -237,6 +239,16 @@ export async function* streamSpokenReply(input: {
     return;
   }
   if (!parsed.speak) {
+    if (input.mode === "addressed") {
+      const hedge = addressedFallback(input.language);
+      debugLog("speak_response", {
+        sessionId: input.sessionId,
+        text: hedge,
+        reason: "addressed-hedge",
+      });
+      yield { type: "done", text: hedge, sources: [] };
+      return;
+    }
     debugLog("no_speak", {
       sessionId: input.sessionId,
       raw: raw.slice(0, 500),
@@ -261,10 +273,15 @@ export async function* streamSpokenReply(input: {
   };
 }
 
-function speakSystemPrompt(language: SpeechLanguage, useWeb: boolean): string {
+function speakSystemPrompt(
+  language: SpeechLanguage,
+  useWeb: boolean,
+  mode: SpeakMode,
+): string {
   const searchLine = useWeb
     ? "Search the web only if the asked fact needs a source."
     : "Do not search unless a checkable fact is missing.";
+  const addressed = mode === "addressed";
 
   return [
     "You are Third Wheel, a quiet person at the table.",
@@ -273,10 +290,14 @@ function speakSystemPrompt(language: SpeechLanguage, useWeb: boolean): string {
     "Answer the current user utterance (and the immediately previous user line if it names the same subject).",
     "Use your last spoken sentence ONLY if they ask what you were talking about (kaj je to / kaj govoriš / what are you talking about).",
     "If they named a new subject (e.g. Zuckerberg, a trial), answer THAT — do not return to an older turn.",
-    "If you would change away from the current user topic — for example they asked about Zuckerberg and you would talk about Hollande — output exactly NO_SPEAK.",
+    addressed
+      ? "They called you by name. Answer or say you do not know. Never output NO_SPEAK."
+      : "If you would change away from the current user topic — for example they asked about Zuckerberg and you would talk about Hollande — output exactly NO_SPEAK.",
     searchLine,
     "Never invent numbers, names, or URLs.",
-    "If the ask is unclear, or you would have to guess a new topic, output exactly NO_SPEAK.",
+    addressed
+      ? "If you are unsure, say that you do not know in one short sentence."
+      : "If the ask is unclear, or you would have to guess a new topic, output exactly NO_SPEAK.",
     "Otherwise output the spoken sentences, then a blank line, then:",
     "SOURCES:",
     "- https://example.com",

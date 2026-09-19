@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   detectFollowUp,
   detectWakePhrase,
+  looksLikeAddressedQuestion,
   normalizeSpeech,
   planUtterance,
 } from "../lib/wake-phrase";
@@ -130,7 +131,40 @@ describe("addressed routing after he speaks", () => {
       pendingNameOnly: true,
       isEcho: false,
     });
-    assert.equal(joke.action, "jev");
+    assert.equal(joke.action, "wait-for-question");
+  });
+
+  it("waits when they only said povej plus the name", () => {
+    const plan = planUtterance({
+      text: "Daj mi povej, hej Third Wheel.",
+      lastSpokenText: lastSpoken,
+      pendingNameOnly: false,
+      isEcho: false,
+    });
+    assert.equal(plan.action, "wait-for-question");
+    assert.equal(looksLikeAddressedQuestion("daj mi povej"), false);
+  });
+
+  it("keeps waiting on English room noise after a name-only wake", () => {
+    const junk = planUtterance({
+      text: "Hey, I want you to make a model that is really extremely fragile.",
+      lastSpokenText: lastSpoken,
+      pendingNameOnly: true,
+      isEcho: false,
+    });
+    assert.equal(junk.action, "wait-for-question");
+  });
+
+  it("speaks when povej has a real entity question", () => {
+    const plan = planUtterance({
+      text: "Povej, hej Third Wheel, povej mi, koliko je ocenjena premoženje Janija Pravdiča iz Ljubljane.",
+      lastSpokenText: lastSpoken,
+      pendingNameOnly: false,
+      isEcho: false,
+    });
+    assert.equal(plan.action, "speak-addressed");
+    if (plan.action !== "speak-addressed") return;
+    assert.match(plan.question, /pravdic/i);
   });
 
   it("attaches a clear checkable question after a name-only wake", () => {
