@@ -123,6 +123,26 @@ describe("addressed routing after he speaks", () => {
     assert.match(next.question, /kaj je to/i);
   });
 
+  it("does not attach the next banter line after a name-only wake", () => {
+    const joke = planUtterance({
+      text: "A je tista moja punca?",
+      lastSpokenText: lastSpoken,
+      pendingNameOnly: true,
+      isEcho: false,
+    });
+    assert.equal(joke.action, "jev");
+  });
+
+  it("attaches a clear checkable question after a name-only wake", () => {
+    const ask = planUtterance({
+      text: "A je Elon Musk najbogatejši?",
+      lastSpokenText: lastSpoken,
+      pendingNameOnly: true,
+      isEcho: false,
+    });
+    assert.equal(ask.action, "speak-addressed");
+  });
+
   it("ignores his own TTS echo when they did not call him", () => {
     const plan = planUtterance({
       text: lastSpoken,

@@ -54,7 +54,25 @@ describe("Jev threshold routing", () => {
     assert.equal(strong.mode, "correction");
   });
 
-  it("stays silent when they are debating or stating a wrong fact on purpose", () => {
+  it("corrects a joking false world fact even when Jev marks debate", () => {
+    const decision = routeJevDecision({
+      answers: answers({
+        shouldSpeak: 0.11,
+        mode: "correction",
+        needsWeb: 0.15,
+        isDebate: 0.86,
+      }),
+      addressed: false,
+      inConversation: false,
+      latestSpeech: "Elon Musk je najrevnejši.",
+      recentSpeech: "Speaker 1: Elon Musk je najrevnejši.",
+    });
+    assert.equal(decision.speak, true);
+    assert.equal(decision.mode, "correction");
+    assert.equal(decision.reason, "correction-world-fact");
+  });
+
+  it("stays silent when both sides of the fact are already on the table", () => {
     const decision = routeJevDecision({
       answers: answers({
         shouldSpeak: 0.9,
@@ -64,6 +82,42 @@ describe("Jev threshold routing", () => {
       }),
       addressed: false,
       inConversation: false,
+      latestSpeech: "Elon je najbogatejši.",
+      recentSpeech:
+        "Speaker 1: Elon je najrevnejši.\nSpeaker 2: Ne, Elon je najbogatejši.",
+    });
+    assert.equal(decision.speak, false);
+    assert.equal(decision.reason, "debate");
+  });
+
+  it("stays silent when they self-correct in the same line", () => {
+    const decision = routeJevDecision({
+      answers: answers({
+        shouldSpeak: 0.11,
+        mode: "correction",
+        needsWeb: 0.15,
+        isDebate: 0.86,
+      }),
+      addressed: false,
+      inConversation: false,
+      latestSpeech:
+        "Elon Musk je najrevnejša oseba, aha, popravek: v bistvu je zelo bogat.",
+    });
+    assert.equal(decision.speak, false);
+    assert.equal(decision.reason, "self-corrected");
+  });
+
+  it("stays silent when they are debating interpretation without a new false claim", () => {
+    const decision = routeJevDecision({
+      answers: answers({
+        shouldSpeak: 0.9,
+        mode: "correction",
+        needsWeb: 0.9,
+        isDebate: 0.8,
+      }),
+      addressed: false,
+      inConversation: false,
+      latestSpeech: "I still think that reading is fair.",
     });
     assert.equal(decision.speak, false);
     assert.equal(decision.reason, "debate");

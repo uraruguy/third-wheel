@@ -61,6 +61,8 @@ export async function POST(request: Request) {
       answers,
       addressed: false,
       inConversation: Boolean(body.inConversation),
+      latestSpeech: body.latestSpeech ?? recentSpeech,
+      recentSpeech,
     });
     debugLog("jev_output", { sessionId, ...decision, answers });
     return NextResponse.json(decision);

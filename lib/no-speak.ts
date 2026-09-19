@@ -197,6 +197,11 @@ const STOP_WORDS = new Set([
   "to",
   "si",
   "sem",
+  "bil",
+  "bila",
+  "bilo",
+  "so",
+  "smo",
   "pa",
   "za",
   "na",
@@ -223,7 +228,7 @@ export function contentWords(text: string): string[] {
 
 export function isClarifyingAsk(text: string): boolean {
   const normalized = normalizeSpeech(text);
-  return /what are you talking about|what did you (say|mean)|kaj (je|si) to|kaj (si|je) (rekel|rekla)|o cem govori|what was that/.test(
+  return /what are you talking about|what did you (say|mean)|kaj (je|si) to|kaj (si|je) (rekel|rekla)|kaj govori|o cem govori|what was that/.test(
     normalized,
   );
 }
@@ -233,21 +238,23 @@ export function replyDriftsFromContext(input: {
   latestSpeech: string;
   lastSpokenTurn: string;
   followUpQuery?: string;
+  priorUtterance?: string;
 }): boolean {
   const replyWords = contentWords(input.reply);
   if (replyWords.length === 0) return true;
 
   const lastClaim = contentWords(input.lastSpokenTurn);
-  const ask = contentWords(`${input.followUpQuery ?? ""} ${input.latestSpeech}`);
   const askText = `${input.followUpQuery ?? ""} ${input.latestSpeech}`;
 
   if (isClarifyingAsk(askText) && lastClaim.length > 0) {
     return overlapRatio(replyWords, lastClaim) < 0.12;
   }
 
-  const allowed = [...new Set([...lastClaim, ...ask])];
-  if (allowed.length === 0) return false;
-  return overlapRatio(replyWords, allowed) < 0.08 && lastClaim.length > 0;
+  const current = contentWords(
+    `${input.followUpQuery ?? ""} ${input.latestSpeech} ${input.priorUtterance ?? ""}`,
+  );
+  if (current.length === 0) return false;
+  return overlapRatio(replyWords, current) < 0.08;
 }
 
 function overlapRatio(reply: string[], allowed: string[]): number {

@@ -75,10 +75,13 @@ export function planUtterance(input: {
   if (input.pendingNameOnly) {
     if (input.isEcho && !wake.matched) return { action: "ignore-echo" };
     if (wake.matched && wake.nameOnly) return { action: "wait-for-question" };
-    return {
-      action: "speak-addressed",
-      question: wake.remainder || input.text.trim(),
-    };
+    if (wake.matched && !wake.nameOnly) {
+      return { action: "speak-addressed", question: wake.remainder };
+    }
+    if (looksLikeAddressedQuestion(input.text)) {
+      return { action: "speak-addressed", question: input.text.trim() };
+    }
+    return { action: "jev" };
   }
 
   if (input.isEcho && !wake.matched) return { action: "ignore-echo" };
@@ -115,4 +118,26 @@ export function detectFollowUp(text: string): {
   }
 
   return { matched: false, query: "" };
+}
+
+const QUESTION_SHAPE =
+  /\?|\b(povej|preveri|poi(?:s|š)[cč]i|who|kdo|what|kaj|koliko|kateri|which|how|why|kdaj|when|where|a je)\b/i;
+const BANTER =
+  /\b(punca|punco|punce|girlfriend|boyfriend|moj fant|moja zena|my wife|sala)\b/;
+const CHECKABLE_ASK =
+  /\b(povej|preveri|poi(?:s|š)[cč]i|who|kdo|koliko|kateri|which|how many|predsednik|leta|kaj)\b/;
+
+export function looksLikeAddressedQuestion(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  const n = normalizeSpeech(trimmed);
+  if (!QUESTION_SHAPE.test(n) && !/\?/.test(trimmed)) return false;
+  if (BANTER.test(n) && !CHECKABLE_ASK.test(n) && !hasProperName(trimmed)) {
+    return false;
+  }
+  return true;
+}
+
+function hasProperName(text: string): boolean {
+  return /[A-ZČŠŽ][a-zčšž]+(?:\s+[A-ZČŠŽ][a-zčšž]+)+/.test(text);
 }

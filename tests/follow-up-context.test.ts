@@ -27,4 +27,19 @@ describe("follow-up payload", () => {
     assert.match(prompt, /90 seconds/);
     assert.doesNotMatch(prompt, /button color/);
   });
+
+  it("makes the current utterance beat the previous Hollande turn", () => {
+    const prompt = buildSpeakUserPrompt({
+      mode: "lookup",
+      latestSpeech: "A je on sploh bil obsojen?",
+      lastSpokenTurn: "Leta 2014 je bil predsednik Francije François Hollande.",
+      topicWindow:
+        "Speaker 1: Da je Mark Zuckerberg en navaden\nSpeaker 2: A je on sploh bil obsojen?",
+    });
+    assert.match(prompt, /Current utterance/);
+    assert.match(prompt, /Zuckerberg/);
+    assert.match(prompt, /obsojen/);
+    assert.match(prompt, /ignore unless they ask/);
+    assert.match(prompt, /Hollande/);
+  });
 });

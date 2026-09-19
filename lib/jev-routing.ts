@@ -6,6 +6,11 @@ import {
   LOOKUP_THRESHOLD,
   NEEDS_WEB_THRESHOLD,
 } from "./constants";
+import {
+  assertsCheckableWorldFact,
+  bothSidesAlreadyStated,
+  selfCorrectedInLine,
+} from "./correction-context";
 import type { GateDecision, JevAnswers, SpeakMode } from "./types";
 
 const MODES: SpeakMode[] = [
@@ -27,8 +32,12 @@ export function routeJevDecision(input: {
   answers: JevAnswers;
   addressed: boolean;
   inConversation: boolean;
+  latestSpeech?: string;
+  recentSpeech?: string;
 }): GateDecision {
   const { answers, addressed, inConversation } = input;
+  const latestSpeech = input.latestSpeech ?? "";
+  const recentSpeech = input.recentSpeech ?? latestSpeech;
   const useWeb = answers.needsWeb >= NEEDS_WEB_THRESHOLD;
   const isDebate = answers.isDebate ?? 0;
 
@@ -73,6 +82,30 @@ export function routeJevDecision(input: {
   }
 
   if (answers.mode === "correction") {
+    if (selfCorrectedInLine(latestSpeech)) {
+      return {
+        speak: false,
+        mode: "silent",
+        useWeb: false,
+        reason: "self-corrected",
+      };
+    }
+    if (bothSidesAlreadyStated(recentSpeech)) {
+      return {
+        speak: false,
+        mode: "silent",
+        useWeb: false,
+        reason: "debate",
+      };
+    }
+    if (assertsCheckableWorldFact(latestSpeech)) {
+      return {
+        speak: true,
+        mode: "correction",
+        useWeb: true,
+        reason: "correction-world-fact",
+      };
+    }
     if (isDebate >= DEBATE_THRESHOLD) {
       if (answers.shouldSpeak >= DEBATE_CORRECTION_THRESHOLD) {
         return {

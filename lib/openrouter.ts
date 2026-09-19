@@ -50,8 +50,10 @@ export async function decideWithJev(input: {
         recent_speech: input.recentSpeech,
         topic_summary: input.topicSummary,
         in_conversation: input.inConversation,
-        last_spoken_turn: context.lastSpokenTurn,
+        last_spoken_turn: context.useLastSpoken ? context.lastSpokenTurn : "",
         latest_utterance: context.latestSpeech,
+        current_utterance: context.currentUtterance,
+        prior_utterance: context.priorUtterance,
         topic_window: context.topicWindow,
       },
       questions: {
@@ -60,9 +62,9 @@ export async function decideWithJev(input: {
           instructions:
             "Should Third Wheel speak one or two sentences out loud to the people in the room right now?",
           criteria: {
-            true: "A short spoken fact would clearly help: a likely wrong checkable claim, a number/name they are trying to recall, or they asked Third Wheel.",
+            true: "A checkable public fact is clearly false — even as a joke (Elon is the poorest person). A number/name they are trying to recall. They asked Third Wheel by name.",
             false:
-              "Casual chat, opinions, jokes, already-known facts, or speaking would interrupt without adding value.",
+              "Casual chat, opinions, already-known facts they just self-corrected, or speaking would interrupt without adding value. A joke that is not a world-fact claim can stay quiet.",
           },
         },
         mode: {
@@ -71,7 +73,7 @@ export async function decideWithJev(input: {
           criteria: {
             silent: "Stay quiet. Nothing useful or appropriate to add.",
             correction:
-              "Someone stated a checkable fact that is likely wrong and worth a polite correction.",
+              "Someone stated a checkable world fact that is likely wrong. A joke or deadpan does not change this.",
             lookup:
               "They do not know a number, name, date, or similar fact and would benefit from a lookup.",
             addressed:
@@ -92,11 +94,11 @@ export async function decideWithJev(input: {
         is_debate: {
           type: "noul",
           instructions:
-            "Are the speakers debating, joking, or knowingly stating a wrong fact on purpose?",
+            "Are they arguing interpretation, already stating both sides, or self-correcting?",
           criteria: {
-            true: "They are arguing both sides, playing devil's advocate, teasing, or clearly know the statement is false.",
+            true: "Both sides of the fact are already on the table, someone just corrected themselves, or they argue meaning — not the raw fact.",
             false:
-              "Someone stated a false fact as if it were true, with no debate, irony, or pushback.",
+              "A single false checkable claim, including a joke that states it as fact. Joking does not make it a debate.",
           },
         },
       },
@@ -141,6 +143,12 @@ export async function* streamSpokenReply(input: {
   | { type: "done"; text: string; sources: Source[] }
   | { type: "no_speak" }
 > {
+  const topic = followUpContext({
+    lastSpokenTurn: input.lastSpokenTurn,
+    latestSpeech: input.latestSpeech,
+    topicWindow: input.topicWindow,
+    followUpQuery: input.followUpQuery,
+  });
   const prompt = buildSpeakUserPrompt(input);
   debugLog("speak_prompt", {
     sessionId: input.sessionId,
@@ -217,6 +225,7 @@ export async function* streamSpokenReply(input: {
       latestSpeech: input.latestSpeech,
       lastSpokenTurn: input.lastSpokenTurn ?? "",
       followUpQuery: input.followUpQuery,
+      priorUtterance: topic.priorUtterance,
     })
   ) {
     debugLog("no_speak", {
@@ -261,8 +270,10 @@ function speakSystemPrompt(language: SpeechLanguage, useWeb: boolean): string {
     "You are Third Wheel, a quiet person at the table.",
     "Speak at most two short sentences in the language of the latest speech.",
     `Write the spoken lines in ${languageName(language)}.`,
-    "Answer only the latest user question, or the last factual claim you made if they ask what you meant (kaj je to / what are you talking about).",
-    "If you would change the topic — for example they asked about your last America claim and you would talk about a color — output exactly NO_SPEAK.",
+    "Answer the current user utterance (and the immediately previous user line if it names the same subject).",
+    "Use your last spoken sentence ONLY if they ask what you were talking about (kaj je to / kaj govoriš / what are you talking about).",
+    "If they named a new subject (e.g. Zuckerberg, a trial), answer THAT — do not return to an older turn.",
+    "If you would change away from the current user topic — for example they asked about Zuckerberg and you would talk about Hollande — output exactly NO_SPEAK.",
     searchLine,
     "Never invent numbers, names, or URLs.",
     "If the ask is unclear, or you would have to guess a new topic, output exactly NO_SPEAK.",
@@ -284,15 +295,21 @@ export function buildSpeakUserPrompt(input: {
     lastSpokenTurn: input.lastSpokenTurn,
     latestSpeech: input.latestSpeech,
     topicWindow: input.topicWindow,
+    followUpQuery: input.followUpQuery,
   });
+  const lastSpokenLine = context.useLastSpoken
+    ? "Your last spoken sentence (they asked what you meant — stay on this):"
+    : "Your last spoken sentence (ignore unless they ask kaj je to / what are you talking about):";
   const parts = [
     `Mode: ${input.mode}`,
     input.followUpQuery ? `Asked / follow-up: ${input.followUpQuery}` : "",
-    "They just said (latest utterance):",
-    context.latestSpeech || "(none)",
-    "Your last spoken sentence (stay on this if they ask kaj je to / what are you talking about):",
+    "Current utterance (answer THIS):",
+    context.currentUtterance || "(none)",
+    "Previous user line (same 1–2 turn topic):",
+    context.priorUtterance || "(none)",
+    lastSpokenLine,
     context.lastSpokenTurn || "(none)",
-    "Topic window (~90 seconds, background only — do not switch to it unless they asked about it):",
+    "Topic window (~90 seconds, background only):",
     context.topicWindow || "(none)",
   ];
   return parts.filter(Boolean).join("\n\n");

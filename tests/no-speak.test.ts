@@ -76,4 +76,23 @@ describe("NO_SPEAK parsing", () => {
     assert.equal(drifted, true);
     assert.equal(onTopic, false);
   });
+
+  it("treats a new subject as the current topic, not the last spoken turn", () => {
+    const gluedToFrance = replyDriftsFromContext({
+      reply: "Govoril sem o Françoisu Hollandu, ki je bil takrat predsednik.",
+      latestSpeech: "Ne vem, enkrat so mu nekaj sodili, samo ne vem.",
+      priorUtterance: "A je on sploh bil obsojen? Da je Mark Zuckerberg en navaden.",
+      lastSpokenTurn:
+        "Leta 2014 je bil predsednik Francije François Hollande.",
+    });
+    const onZuckerberg = replyDriftsFromContext({
+      reply: "Mark Zuckerberg ni bil kazensko obsojen, čeprav so mu sodili v civilnih zadevah.",
+      latestSpeech: "Ne vem, enkrat so mu nekaj sodili, samo ne vem.",
+      priorUtterance: "A je on sploh bil obsojen? Da je Mark Zuckerberg en navaden.",
+      lastSpokenTurn:
+        "Leta 2014 je bil predsednik Francije François Hollande.",
+    });
+    assert.equal(gluedToFrance, true);
+    assert.equal(onZuckerberg, false);
+  });
 });

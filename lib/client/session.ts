@@ -216,6 +216,8 @@ export class ThirdWheelSession {
       return;
     }
 
+    this.pendingNameOnly = false;
+
     if (now - this.lastWakePartialAt < 2500) return;
 
     if (!this.beginTurn("jev", utterance.text)) return;
