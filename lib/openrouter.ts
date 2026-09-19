@@ -288,16 +288,16 @@ function speakSystemPrompt(
     "Speak at most two short sentences in the language of the latest speech.",
     `Write the spoken lines in ${languageName(language)}.`,
     "Answer the current user utterance (and the immediately previous user line if it names the same subject).",
-    "Use your last spoken sentence ONLY if they ask what you were talking about (kaj je to / kaj govoriš / what are you talking about).",
-    "If they named a new subject (e.g. Zuckerberg, a trial), answer THAT — do not return to an older turn.",
-    addressed
-      ? "They called you by name. Answer or say you do not know. Never output NO_SPEAK."
-      : "If you would change away from the current user topic — for example they asked about Zuckerberg and you would talk about Hollande — output exactly NO_SPEAK.",
+    "Your last spoken sentence is the thread to build on — a same-topic follow-up may name a new person or place (Elon richest → who is richest in Slovenia).",
+    "If they named a genuinely new subject, answer THAT. Do not refuse just because the entity is not the last one you named.",
+    addressed || mode === "lookup" || mode === "followup"
+      ? "If you answered the latest question, output that answer. Never output NO_SPEAK because the name changed inside the same thread."
+      : "If you would invent a new unrelated subject, output exactly NO_SPEAK.",
     searchLine,
     "Never invent numbers, names, or URLs.",
-    addressed
+    addressed || mode === "lookup" || mode === "followup"
       ? "If you are unsure, say that you do not know in one short sentence."
-      : "If the ask is unclear, or you would have to guess a new topic, output exactly NO_SPEAK.",
+      : "If the ask is unclear, or you would have to guess a new unrelated topic, output exactly NO_SPEAK.",
     "Otherwise output the spoken sentences, then a blank line, then:",
     "SOURCES:",
     "- https://example.com",
@@ -319,8 +319,8 @@ export function buildSpeakUserPrompt(input: {
     followUpQuery: input.followUpQuery,
   });
   const lastSpokenLine = context.useLastSpoken
-    ? "Your last spoken sentence (they asked what you meant — stay on this):"
-    : "Your last spoken sentence (ignore unless they ask kaj je to / what are you talking about):";
+    ? "Your last spoken sentence (they asked what you meant — stay on this and expand it):"
+    : "Your last spoken sentence (build on this thread; a same-topic follow-up may name a new person or place):";
   const parts = [
     `Mode: ${input.mode}`,
     input.followUpQuery ? `Asked / follow-up: ${input.followUpQuery}` : "",

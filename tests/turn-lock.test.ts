@@ -10,8 +10,14 @@ import {
 describe("in-flight turn lock", () => {
   it("drops a second lookup while a turn is in flight", () => {
     assert.equal(actionForIncoming(true, "jev"), "drop");
-    assert.equal(actionForIncoming(true, "followup"), "drop");
     assert.equal(actionForIncoming(false, "jev"), "start");
+  });
+
+  it("barges a clarifying follow-up during in-flight TTS", () => {
+    assert.equal(actionForIncoming(true, "followup", { text: "Kaj je bilo?" }), "barge");
+    assert.equal(actionForIncoming(true, "jev", { text: "Kaj je bilo?" }), "barge");
+    assert.equal(actionForIncoming(true, "jev", { text: "kaj?" }), "barge");
+    assert.equal(actionForIncoming(true, "jev", { text: "Like a Canadian." }), "drop");
   });
 
   it("lets a name-call barge and replace the in-flight turn", () => {

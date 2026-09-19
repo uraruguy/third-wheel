@@ -39,7 +39,7 @@ describe("follow-up payload", () => {
     assert.match(prompt, /Current utterance/);
     assert.match(prompt, /Zuckerberg/);
     assert.match(prompt, /obsojen/);
-    assert.match(prompt, /ignore unless they ask/);
+    assert.match(prompt, /build on this thread/);
     assert.match(prompt, /Hollande/);
   });
 });

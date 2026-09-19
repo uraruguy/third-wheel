@@ -13,6 +13,7 @@ import {
   spokenAfterInterrupt,
   type IncomingKind,
 } from "../turn-lock";
+import { isClarifyingAsk } from "../no-speak";
 import { detectFollowUp, detectWakePhrase, planUtterance } from "../wake-phrase";
 import { startMicCapture, type CaptureHandle } from "./mic";
 import { SonioxSttClient } from "./stt";
@@ -218,13 +219,21 @@ export class ThirdWheelSession {
     }
 
     const follow = detectFollowUp(utterance.text);
-    if (this.inConversation && follow.matched) {
+    const clarifying =
+      Boolean(this.lastSpokenText) &&
+      isClarifyingAsk(utterance.text) &&
+      (this.inConversation || this.inFlight || this.tts.isPlaying);
+    if ((this.inConversation && follow.matched) || clarifying) {
       if (!this.beginTurn("followup", utterance.text)) return;
-      this.postDebug("follow_up", { source: "endpoint", query: follow.query });
+      this.postDebug("follow_up", {
+        source: "endpoint",
+        query: follow.matched ? follow.query : utterance.text,
+        clarifying,
+      });
       void this.speakNow({
         mode: "followup",
         latestSpeech: utterance.text,
-        followUpQuery: follow.query,
+        followUpQuery: follow.matched ? follow.query : utterance.text,
         useWeb: true,
         language: utterance.language,
       });

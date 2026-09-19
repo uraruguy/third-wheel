@@ -228,13 +228,22 @@ export function contentWords(text: string): string[] {
 
 export function isClarifyingAsk(text: string): boolean {
   const normalized = normalizeSpeech(text);
-  return /what are you talking about|what did you (say|mean)|kaj (je|si) to|kaj (si|je) (rekel|rekla)|kaj govori|o cem govori|what was that/.test(
-    normalized,
-  );
+  if (!normalized) return false;
+  if (
+    /what are you talking about|what did you (say|mean)|kaj (je|si) (to|bilo)|kaj je bilo|kaj (si|je) (rekel|rekla)|kaj govori|o cem govori|what was that/.test(
+      normalized,
+    )
+  ) {
+    return true;
+  }
+  return /^(kaj|kdo|koliko|a ni|kako)(\s+(je|bilo|to|pa|ze|ze to))?$/.test(normalized);
 }
 
 export function discardReplyAsDrift(mode: SpeakMode, drifted: boolean): boolean {
-  return drifted && mode !== "addressed";
+  if (mode === "addressed" || mode === "lookup" || mode === "followup") {
+    return false;
+  }
+  return drifted;
 }
 
 export function addressedFallback(language: SpeechLanguage): string {
@@ -258,11 +267,44 @@ export function replyDriftsFromContext(input: {
     return overlapRatio(replyWords, lastClaim) < 0.12;
   }
 
+  if (sameTopicContinuation(askText, input.reply, input.lastSpokenTurn)) {
+    return false;
+  }
+
   const current = contentWords(
     `${input.followUpQuery ?? ""} ${input.latestSpeech} ${input.priorUtterance ?? ""}`,
   );
   if (current.length === 0) return false;
+  if (overlapRatio(stemWords(replyWords), stemWords(current)) >= 0.08) return false;
   return overlapRatio(replyWords, current) < 0.08;
+}
+
+const WEALTH_TOPIC =
+  /bogat|revn|premozen|wealth|richest|poorest|fortune|worth|milijon|milijard|denar|kes|cash|lestvic|login/;
+const SLOVENIA_TOPIC = /sloven/;
+const WHO_HOW_ASK = /\b(kdo|koliko|a ni|who|how many|najbogat|najrevn)\b/;
+const REFERRING_PRONOUN = /\b(on|ona|oni|njegov|njen|njih|njiju|onadva|tisti|ta|njima)\b/;
+
+function sameTopicContinuation(ask: string, reply: string, lastSpoken: string): boolean {
+  const askN = normalizeSpeech(ask);
+  const replyN = normalizeSpeech(reply);
+  if (!askN || !replyN) return false;
+  if (WEALTH_TOPIC.test(askN) && WEALTH_TOPIC.test(replyN)) return true;
+  if (SLOVENIA_TOPIC.test(askN) && SLOVENIA_TOPIC.test(replyN)) return true;
+  if (WHO_HOW_ASK.test(askN) && WEALTH_TOPIC.test(replyN)) return true;
+  if (REFERRING_PRONOUN.test(askN) && lastSpoken) {
+    const lastN = normalizeSpeech(lastSpoken);
+    if (WEALTH_TOPIC.test(lastN) && WEALTH_TOPIC.test(replyN)) return true;
+    if (SLOVENIA_TOPIC.test(lastN) && SLOVENIA_TOPIC.test(replyN)) return true;
+  }
+  return false;
+}
+
+function stemWords(words: string[]): string[] {
+  return words.map((word) => {
+    if (word.length <= 4) return word;
+    return word.replace(/(jih|imi|ima|ega|emu|ih|ov|ev|ah|am|om|em)$/, "").slice(0, 7);
+  });
 }
 
 function overlapRatio(reply: string[], allowed: string[]): number {

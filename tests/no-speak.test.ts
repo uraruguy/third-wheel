@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   addressedFallback,
   discardReplyAsDrift,
+  isClarifyingAsk,
   isNoSpeakPrefix,
   parseSpeakResponse,
   replyDriftsFromContext,
@@ -83,12 +84,43 @@ describe("NO_SPEAK parsing", () => {
     assert.equal(onTopic, false);
   });
 
-  it("never discards an addressed reply as drift", () => {
+  it("never discards an addressed, lookup, or follow-up reply as drift", () => {
     assert.equal(discardReplyAsDrift("addressed", true), false);
-    assert.equal(discardReplyAsDrift("lookup", true), true);
+    assert.equal(discardReplyAsDrift("lookup", true), false);
+    assert.equal(discardReplyAsDrift("followup", true), false);
     assert.equal(discardReplyAsDrift("correction", true), true);
     assert.equal(addressedFallback("sl"), "Ne vem.");
     assert.equal(addressedFallback("en"), "I don't know.");
+  });
+
+  it("treats Elon richest to Slovenia richest as the same thread", () => {
+    const drifted = replyDriftsFromContext({
+      reply:
+        "Na vrhu lestvice najbogatejših Slovencev sta se nazadnje znašla Iza in Samo Login.",
+      latestSpeech: "Kdo pa je tako v Sloveniji najbogatejši človek? To me res zanima.",
+      lastSpokenTurn:
+        "Elon Musk je pravzaprav eden najbogatejših ljudi na svetu, saj je postal prvi bilijonar.",
+    });
+    assert.equal(drifted, false);
+  });
+
+  it("treats kaj je bilo as a clarifying ask", () => {
+    assert.equal(isClarifyingAsk("Kaj je bilo?"), true);
+    assert.equal(isClarifyingAsk("kaj?"), true);
+    assert.equal(isClarifyingAsk("koliko"), true);
+    assert.equal(isClarifyingAsk("kdo"), true);
+    assert.equal(
+      isClarifyingAsk("Kdo pa je tako v Sloveniji najbogatejši človek?"),
+      false,
+    );
+    const onOutfit = replyDriftsFromContext({
+      reply:
+        "Pri prodaji podjetja Outfit7 so poleg njiju veliko zaslužili tudi drugi soustanovitelji.",
+      latestSpeech: "Kaj je bilo?",
+      lastSpokenTurn:
+        "Pri prodaji podjetja Outfit7 so poleg njiju veliko zaslužili tudi drugi soustanovitelji.",
+    });
+    assert.equal(onOutfit, false);
   });
 
   it("treats a new subject as the current topic, not the last spoken turn", () => {

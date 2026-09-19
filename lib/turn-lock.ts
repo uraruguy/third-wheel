@@ -1,3 +1,4 @@
+import { isClarifyingAsk } from "./no-speak";
 import type { Source, SpeakMode } from "./types";
 import { detectWakePhrase, normalizeSpeech } from "./wake-phrase";
 
@@ -23,7 +24,11 @@ export function actionForIncoming(
   extras?: IncomingLock,
 ): "start" | "drop" | "barge" {
   if (kind === "name-call") return inFlight ? "barge" : "start";
-  if (inFlight) return "drop";
+  if (inFlight) {
+    if (kind === "followup") return "barge";
+    if (extras?.text && isClarifyingAsk(extras.text)) return "barge";
+    return "drop";
+  }
   if (
     kind === "jev" &&
     extras?.text &&
