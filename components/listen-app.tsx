@@ -126,6 +126,26 @@ export function ListenApp() {
         >
           {active ? "Stop" : "Start listening"}
         </button>
+
+        {/* Who made it and where the code is: only while idle, so the screen on the table stays quiet. */}
+        {snapshot.phase === "idle" && (
+          <p className="mt-10 text-xs text-[var(--muted)]">
+            Built by{" "}
+            <a
+              href="https://jakobkavcic.com"
+              className="text-[var(--foreground)] underline decoration-[var(--line)] underline-offset-4"
+            >
+              Jakob Kavčič
+            </a>
+            {" · "}
+            <a
+              href="https://github.com/uraruguy/third-wheel"
+              className="underline decoration-[var(--line)] underline-offset-4"
+            >
+              GitHub
+            </a>
+          </p>
+        )}
       </div>
     </main>
   );

@@ -13,11 +13,28 @@ const fraunces = Fraunces({
   subsets: ["latin", "latin-ext"],
 });
 
+// Who made it, for search engines: the same person id as on jakobkavcic.com.
+const AUTHOR = { name: "Jakob Kavčič", url: "https://jakobkavcic.com", id: "https://jakobkavcic.com/#person" };
+const DESCRIPTION = "A quiet table companion. It listens, joins only when useful, and cites its sources.";
+const structuredData = {
+  "@context": "https://schema.org",
+  "@type": "WebApplication",
+  name: "Third Wheel",
+  description: DESCRIPTION,
+  applicationCategory: "UtilitiesApplication",
+  operatingSystem: "Any",
+  isAccessibleForFree: true,
+  url: "https://third-wheel-phi.vercel.app",
+  sameAs: ["https://github.com/uraruguy/third-wheel"],
+  author: { "@type": "Person", "@id": AUTHOR.id, name: AUTHOR.name, url: AUTHOR.url },
+};
+
 export const metadata: Metadata = {
   title: "Third Wheel",
-  description:
-    "A quiet table companion. It listens, joins only when useful, and cites its sources.",
+  description: DESCRIPTION,
   applicationName: "Third Wheel",
+  authors: [{ name: AUTHOR.name, url: AUTHOR.url }],
+  creator: AUTHOR.name,
   appleWebApp: {
     capable: true,
     title: "Third Wheel",
@@ -42,6 +59,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${outfit.variable} ${fraunces.variable} h-full antialiased`}
     >
       <body className="min-h-full">
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData).replace(/</g, "\\u003c") }}
+        />
         <RegisterSw />
         {children}
       </body>
